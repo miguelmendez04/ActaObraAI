@@ -1,0 +1,19 @@
+# Backend
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# Base Vectorial
+chromadb
+
+# IA / LLM
+google-generativeai
+
+# Procesamiento de texto
+PyPDF2==3.0.1
+langchain
+langchain-text-splitters
+
+# Frontend
+streamlit
+requests

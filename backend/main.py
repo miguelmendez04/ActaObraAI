@@ -44,7 +44,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-CHROMA_DIR = os.path.join(os.path.dirname(__file__), "..", "chroma_db")
+CHROMA_DIR = os.environ.get("CHROMA_DIR", os.path.join(os.path.dirname(__file__), "..", "chroma_db"))
 chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
 collection = chroma_client.get_or_create_collection(
     name="actas_obra",

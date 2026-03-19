@@ -1,0 +1,14 @@
+venv/
+chroma_db/
+test_chroma/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+.env
+*.egg-info/
+dist/
+build/
+.vscode/
+.idea/

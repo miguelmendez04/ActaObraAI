@@ -17,6 +17,7 @@ load_dotenv()  # Carga las variables de entorno desde el archivo .env
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import chromadb
@@ -38,7 +39,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:7860", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -96,16 +97,57 @@ class IngestResponse(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/")
+@app.get("/api")
 def root():
     return {
         "app": "ActaObra IA",
-        "version": "0.1.0",
-        "endpoints": ["/ingest-pdf", "/ask"],
+        "version": "0.3.0",
+        "endpoints": ["/api/ingest-pdf", "/api/ask", "/api/documents"],
     }
 
+@app.get("/api/documents")
+def get_documents():
+    """
+    Retorna la lista de documentos únicos que han sido subidos y procesados.
+    Extrae los nombres desde los metadatos de ChromaDB.
+    """
+    try:
+        results = collection.get(include=["metadatas"])
+        metadatas = results.get("metadatas", [])
+        
+        # Extraer nombres de archivo únicos
+        archivos_unicos = {}
+        for meta in metadatas:
+            # Los metadatos de subida usan "source" para el nombre del archivo
+            if meta and "source" in meta:
+                archivo = meta["source"]
+                if archivo not in archivos_unicos:
+                    # Guardamos la primera ocurrencia representativa
+                    archivos_unicos[archivo] = {
+                        "name": archivo,
+                        "proyecto": meta.get("proyecto", "Desconocido"),
+                        "fecha": meta.get("fecha_reunion", "N/A")
+                    }
+        
+        docs_list = list(archivos_unicos.values())
+        return {"documents": docs_list}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/ingest-pdf", response_model=IngestResponse)
+@app.delete("/api/documents")
+def reset_documents():
+    """
+    Vacía toda la base de datos de ChromaDB borrando y recreando la colección.
+    """
+    try:
+        chroma_client.delete_collection(name="actas_obra")
+        global collection
+        collection = chroma_client.get_or_create_collection(name="actas_obra")
+        return {"status": "success", "message": "Base de datos ChromaDB reiniciada desde cero."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ingest-pdf", response_model=IngestResponse)
 async def ingest_pdf(file: UploadFile = File(...)):
     """
     Recibe un PDF, extrae texto, realiza chunking con metadatos ficticios
@@ -200,7 +242,7 @@ async def ingest_pdf(file: UploadFile = File(...)):
     )
 
 
-@app.post("/ask", response_model=AskResponse)
+@app.post("/api/ask", response_model=AskResponse)
 async def ask(body: AskRequest):
     """
     Recibe una pregunta, busca fragmentos relevantes en ChromaDB
@@ -295,3 +337,12 @@ async def ask(body: AskRequest):
         answer = f"❌ Error al generar respuesta con Gemini: {str(e)}"
 
     return AskResponse(answer=answer, sources=sources)
+
+
+# ---------------------------------------------------------------------------
+# SPA — Servir el frontend compilado (React/Vite)
+# ---------------------------------------------------------------------------
+
+FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+if os.path.isdir(FRONTEND_DIST):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="spa")

@@ -23,24 +23,26 @@ Sube actas de reuniones de obra (PDFs con texto, fotos y planos) y realiza consu
 | Base Vectorial | ChromaDB (local, persistente) |
 | IA / LLM | Google Gemini 2.5 Flash (SDK `google-generativeai`) — Multimodal |
 | Procesamiento de PDFs | PyMuPDF (fitz) · Pillow |
-| Frontend | Streamlit |
+| Frontend | React · Vite · Tailwind CSS · React Markdown |
+| Despliegue | Docker Multi-Stage (Hugging Face Spaces) |
 
 ## Arquitectura RAG
 
 ```
-┌───────────────┐      ┌──────────────────────────────────┐
-│  Streamlit UI │─────▶│  FastAPI Backend                  │
-│  (Chat + PDF) │◀─────│                                   │
-└───────────────┘      │  POST /ingest-pdf                 │
-                       │    1. PDF → Imágenes (PyMuPDF)    │
-                       │    2. Imágenes → Gemini Vision     │
-                       │    3. JSON estructurado → ChromaDB │
-                       │                                   │
-                       │  POST /ask                        │
-                       │    1. Pregunta → ChromaDB (search) │
-                       │    2. Contexto + metadatos → Gemini│
-                       │    3. Respuesta citada → Cliente   │
-                       └──────────────────────────────────┘
+┌─────────────────────────────────┐      ┌──────────────────────────────────┐
+│  React UI (Vite + Tailwind)     │─────▶│  FastAPI Backend                 │
+│  (Chat Dashboard SPA)           │◀─────│  Servido estáticamente en '/'    │
+└─────────────────────────────────┘      │                                  │
+                                         │  POST /api/ingest-pdf            │
+                                         │    1. PDF → Imágenes (PyMuPDF)   │
+                                         │    2. Imágenes → Gemini Vision    │
+                                         │    3. JSON estructurado → Chroma │
+                                         │                                  │
+                                         │  POST /api/ask                   │
+                                         │    1. Pregunta → ChromaDB        │
+                                         │    2. Contexto + meta → Gemini   │
+                                         │    3. Respuesta citada → Cliente │
+                                         └──────────────────────────────────┘
 ```
 
 ## Estructura del Proyecto
@@ -48,86 +50,81 @@ Sube actas de reuniones de obra (PDFs con texto, fotos y planos) y realiza consu
 ```
 ActaObraIA/
 ├── backend/
-│   └── main.py          # API FastAPI con endpoints /ingest-pdf y /ask
+│   └── main.py          # API FastAPI con endpoints /api/ingest-pdf, /api/ask, /api/documents
 ├── frontend/
-│   └── app.py           # Dashboard Streamlit (chat + sidebar PDF)
-├── chroma_db/           # Base vectorial persistente (se crea automáticamente)
-├── .env                 # API Key de Gemini (no se sube a GitHub)
-├── requirements.txt     # Dependencias
-└── README.md
+│   ├── src/
+│   │   ├── App.jsx      # Componente principal de React con la UI del Chat
+│   │   ├── main.jsx     # Punto de entrada de React
+│   │   └── index.css    # Estilos globales y Tailwind
+│   ├── index.html       # Plantilla SPA
+│   ├── package.json     # Dependencias de Node
+│   ├── tailwind.config.js # Configuración de diseño y colores
+│   └── vite.config.js   # Config de empaquetado
+├── chroma_data/         # Base vectorial persistente de Chroma (se crea auto)
+├── Dockerfile           # Multi-stage build (Node.js -> Python slim)
+├── .env                 # API Key de Gemini
+└── requirements.txt     # Dependencias del Backend
 ```
 
-## Instalación
+## Instalación y Desarrollo Local
+
+### 1. Backend (FastAPI)
 
 ```bash
-# 1. Crear y activar entorno virtual
+# Crear y activar entorno virtual (Windows)
 python -m venv venv
-
-# Windows
 .\venv\Scripts\activate
 
-# macOS/Linux
-source venv/bin/activate
-
-# 2. Instalar dependencias
+# Instalar dependencias
 pip install -r requirements.txt
 
-# 3. Configurar API Key de Gemini
-# Crear archivo .env en la raíz del proyecto:
+# Configurar API Key de Gemini
 echo GEMINI_API_KEY=tu_api_key_aqui > .env
-```
 
-## Levantar los Servidores
-
-### Backend (FastAPI)
-
-```bash
+# Levantar el servidor
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
+- API Docs: `http://localhost:8000/docs`
 
-- Backend: `http://localhost:8000`  
-- Swagger UI: `http://localhost:8000/docs`
+### 2. Frontend (React + Vite)
 
-### Frontend (Streamlit)
-
-En otra terminal:
+Abre otra terminal:
 
 ```bash
-streamlit run frontend/app.py --server.port 8501
+cd frontend
+npm install
+npm run dev
 ```
+- Interfaz en vivo: `http://localhost:5173`
 
-- Dashboard: `http://localhost:8501`
+*(Nota: En modo desarrollo (`npm run dev`), el frontend redirigirá automáticamente las peticiones de la API hacia el puerto `8000` del backend).*
+
+## Producción (Docker puro)
+
+La aplicación usa un Dockerfile multi-etapa optimizado para correr en Hugging Face Spaces (exponiendo solamente el puerto 7860 y ejecutando internamente el build de React y luego sirviendo todo vía FastAPI).
+
+```bash
+docker build -t actaobra-ia .
+docker run -p 7860:7860 -e GEMINI_API_KEY=tu_key actaobra-ia
+```
+Abre tu navegador en `http://localhost:7860`.
 
 ## Características Principales
 
-### 📄 Ingesta Multimodal de PDFs
-- Cada página del PDF se convierte en imagen con **PyMuPDF**.
-- Las imágenes se envían a **Gemini 2.5 Flash** en modo visión multimodal.
-- Gemini lee texto mecanografiado, manuscrito, analiza fotos de obra (elementos constructivos, % de avance, materiales, problemas visibles) y extrae acuerdos técnicos.
-- Los fragmentos se almacenan en **ChromaDB** con metadatos reales (proyecto, fecha) extraídos por la IA.
+### 📄 Ingesta Multimodal de PDFs (Multi-Archivo)
+- **Carga en Lote**: Arrastra y suelta múltiples PDFs en la interfaz; se procesarán sistemáticamente.
+- Cada página se convierte en imagen (PyMuPDF) y es leída nativamente por **Gemini 2.5 Flash** en modo visión.
+- Extrae mecánicamente texto manuscrito y fotos de elementos constructivos catalogando porcentaje de avance y problemas visibles.
 
-### 🤖 Consultas RAG con Citas Obligatorias
-- Las preguntas se procesan buscando los fragmentos más similares en ChromaDB.
-- El contexto se ensambla con metadatos explícitos (documento, fecha, proyecto) para cada fragmento.
-- Gemini actúa como **Residente de Obra** con un System Prompt blindado:
-  - Tono profesional de ingeniero civil en campo.
-  - Respuestas detalladas y explicativas con viñetas y estructura.
-  - Cero alucinaciones: si no está en las actas, lo dice.
-  - **Cita obligatoria** con formato `(Fuente: [Acta] - [Fecha])`.
+### 🤖 Memoria Operativa Persistente
+- Las actas se almacenan en tiempo real en la base de datos `ChromaDB` (local/disco).
+- El menú lateral consulta permanentemente el endpoint `GET /api/documents` y te ofrece el listado histórico de toda tu Inteligencia Institucional ingerida.
+- Endpoint administrativo disponible (`DELETE /api/documents`) para reiniciar la base de conocimiento 100% en limpio.
 
-## Uso
+### 🏢 Consultas RAG Nivel "Ingeniero Civil Residente"
+- Las preguntas al chat buscan similitud semántica en los fragmentos mediante incrustaciones vectoriales.
+- El Prompt del Sistema ("Residente Principal de Obra") está **blindado contra alucinaciones**, respondiendo solo con la base aportada.
+- **Citas estandarizadas rigurosas**: Todo hito y acuerdo en la respuesta detalla explícitamente el origen de forma visible.
 
-1. **Subir PDFs**: Usa la barra lateral para arrastrar actas de obra en PDF.
-2. **Consultar**: Escribe tu pregunta en el chat, por ejemplo:
-   - *"¿Qué se acordó sobre el concreto y en qué nivel?"*
-   - *"¿Qué evidencia fotográfica hay del avance de obra?"*
-   - *"¿Cuáles son los pendientes más críticos y quién es responsable?"*
-   - *"Resume los acuerdos de la última reunión técnica"*
-
-## Endpoints de la API
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/` | Info de la aplicación |
-| `POST` | `/ingest-pdf` | Sube un PDF, lo analiza visualmente con Gemini y almacena los fragmentos en ChromaDB |
-| `POST` | `/ask` | Envía una pregunta y obtiene una respuesta RAG citada con fuentes |
+---
+*Desarrollado para transformar la memoria técnica muerta en un asistente vivo de obra.*

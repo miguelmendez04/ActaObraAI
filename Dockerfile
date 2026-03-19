@@ -1,20 +1,32 @@
 # ============================================================
-# ActaObra IA — Dockerfile para Hugging Face Spaces
+# Etapa 1: Build del Frontend (Node.js)
 # ============================================================
+FROM node:18-alpine AS frontend-builder
 
-# Imagen base ligera
+WORKDIR /app/frontend
+
+# Copiar configuración e instalar dependencias primero (cache layer)
+COPY frontend/package.json ./
+RUN npm install
+
+# Copiar el resto del código y compilar la aplicación React (Vite)
+COPY frontend/ ./
+RUN npm run build
+
+# ============================================================
+# Etapa 2: Imagen de Producción (Python FastAPI)
+# ============================================================
 FROM python:3.10-slim
 
-# Variables de entorno
+# Variables de entorno para Python
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     CHROMA_DIR=/app/chroma_data
 
-# Directorio de trabajo
 WORKDIR /app
 
-# Instalar dependencias del sistema necesarias para PyMuPDF
+# Instalar dependencias del sistema necesarias (PyMuPDF, etc.)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
@@ -25,28 +37,27 @@ RUN apt-get update && \
 # Crear usuario no root (uid 1000) requerido por Hugging Face
 RUN useradd -m -u 1000 appuser
 
-# Crear directorios para datos persistentes y darle permisos
+# Crear directorio para ChromaDB y darle permisos completos (777)
 RUN mkdir -p /app/chroma_data && chmod 777 /app/chroma_data
-RUN mkdir -p /home/appuser/.streamlit && chmod 777 /home/appuser/.streamlit
 
-# Copiar requirements e instalar dependencias Python
+# Instalar dependencias de Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar todo el código fuente
-COPY . .
+# Copiar código del backend
+COPY backend/ ./backend/
 
-# Ajustar permisos para el usuario 1000
+# Copiar el frontend compilado (dist) desde la Etapa 1
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+
+# Ajustar permisos de la carpeta app para el usuario no root
 RUN chown -R appuser:appuser /app
-
-# Dar permisos de ejecución al script de arranque
-RUN chmod +x start.sh
 
 # Cambiar a usuario no root
 USER appuser
 
-# Exponer el puerto 7860 (requisito de Hugging Face Spaces)
+# Exponer el puerto 7860 para Hugging Face Spaces
 EXPOSE 7860
 
-# Comando de arranque
-CMD ["./start.sh"]
+# Ejecutar el backend (que a su vez sirve el frontend estático SPA)
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "7860"]

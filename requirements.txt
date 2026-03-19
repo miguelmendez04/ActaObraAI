@@ -2,6 +2,7 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-multipart==0.0.20
+python-dotenv
 
 # Base Vectorial
 chromadb
@@ -9,8 +10,9 @@ chromadb
 # IA / LLM
 google-generativeai
 
-# Procesamiento de texto
-PyPDF2==3.0.1
+# Procesamiento de documentos
+pymupdf
+pillow
 langchain
 langchain-text-splitters
 

@@ -92,7 +92,7 @@ with st.sidebar:
                         resp = requests.post(
                             f"{BACKEND_URL}/ingest-pdf",
                             files={"file": (uf.name, uf.getvalue(), "application/pdf")},
-                            timeout=60,
+                            timeout=300,  # Aumentado para dar tiempo a Gemini Multimodal
                         )
                         if resp.status_code == 200:
                             data = resp.json()

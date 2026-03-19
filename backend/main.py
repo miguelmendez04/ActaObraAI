@@ -7,7 +7,13 @@ import os
 import uuid
 import datetime
 import random
+import json
 from typing import Optional
+
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+load_dotenv()  # Carga las variables de entorno desde el archivo .env
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +22,9 @@ from pydantic import BaseModel
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
-from PyPDF2 import PdfReader
+import fitz  # PyMuPDF
+from PIL import Image
+import io
 
 # ---------------------------------------------------------------------------
 # App & ChromaDB initialisation
@@ -55,55 +63,16 @@ TIPOS_REUNION = [
     "Reunión técnica",
 ]
 
-
-def extract_text_from_pdf(file_bytes: bytes, filename: str) -> str:
-    """Extract raw text from a PDF using PyPDF2."""
-    import io
-
-    reader = PdfReader(io.BytesIO(file_bytes))
-    pages_text: list[str] = []
-    for page in reader.pages:
-        text = page.extract_text()
-        if text:
-            pages_text.append(text.strip())
-    full_text = "\n\n".join(pages_text)
-    if not full_text.strip():
-        # Fallback: simulated text for testing when PDF has no extractable text
-        full_text = (
-            f"[Texto simulado del documento: {filename}]\n"
-            "Se acordó revisar el avance de la cimentación en el sector norte.\n"
-            "Se aprobó el uso de concreto f'c=250 para las columnas del nivel 3.\n"
-            "El contratista deberá presentar el plan de trabajo actualizado antes del viernes.\n"
-            "Se requiere refuerzo adicional en la losa del estacionamiento.\n"
-            "La siguiente reunión será el lunes a las 10:00 AM en oficina de obra."
-        )
-    return full_text
-
-
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
-    """Split text into overlapping chunks."""
-    chunks: list[str] = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start += chunk_size - overlap
-    return [c.strip() for c in chunks if c.strip()]
-
-
-def generate_metadata(filename: str, chunk_index: int) -> dict:
-    """Generate simulated structural metadata for a chunk."""
-    base_date = datetime.date(2025, 1, 15)
-    offset_days = random.randint(0, 365)
-    fecha = (base_date + datetime.timedelta(days=offset_days)).isoformat()
-    return {
-        "source": filename,
-        "chunk_index": chunk_index,
-        "fecha_reunion": fecha,
-        "tipo_reunion": random.choice(TIPOS_REUNION),
-    }
-
-
+def extract_images_from_pdf(file_bytes: bytes) -> list[Image.Image]:
+    """Extrae cada página de un PDF como una imagen PIL."""
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    images = []
+    for page in doc:
+        # Extraer página como imagen (pixmap) a menor DPI para acelerar el procesamiento
+        pix = page.get_pixmap(dpi=100)
+        img_bytes = pix.tobytes("jpeg")
+        images.append(Image.open(io.BytesIO(img_bytes)))
+    return images
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
@@ -147,23 +116,77 @@ async def ingest_pdf(file: UploadFile = File(...)):
 
     file_bytes = await file.read()
 
-    # 1. Extracción de texto
-    full_text = extract_text_from_pdf(file_bytes, file.filename)
+    # 1. Extracción de imágenes
+    images = extract_images_from_pdf(file_bytes)
 
-    # 2. Chunking
-    chunks = chunk_text(full_text)
+    if not images:
+        raise HTTPException(status_code=422, detail="No se pudo procesar el PDF.")
+
+    # 2. Llamada a Gemini para estructurar el JSON desde las imágenes
+    genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
+    model = genai.GenerativeModel("gemini-2.5-flash")
+
+    system_prompt = (
+        "Eres un ingeniero civil senior con 20 años de experiencia analizando actas de reuniones "
+        "y reportes de avance de obra presentados como imágenes de páginas de un PDF.\n\n"
+        "INSTRUCCIONES PARA TEXTO:\n"
+        "- Lee todo el texto mecanografiado, manuscrito y anotaciones visibles.\n"
+        "- Extrae cada acuerdo, compromiso, observación técnica, pendiente y decisión como un string individual y detallado.\n"
+        "- Incluye datos específicos: cantidades, medidas, especificaciones técnicas (f'c, diámetros, etc.), plazos y responsables mencionados.\n\n"
+        "INSTRUCCIONES PARA IMÁGENES Y FOTOS (CRÍTICO):\n"
+        "- Si la página contiene fotografías de la obra, planos, croquis o diagramas, DEBES analizarlos a fondo.\n"
+        "- Para cada imagen de obra, describe detalladamente: qué elemento constructivo se muestra (cimentación, columnas, losas, muros, instalaciones, etc.), "
+        "el estado visible de avance (porcentaje aproximado si es posible), los materiales visibles (concreto, acero, encofrado, block, etc.), "
+        "cualquier problema visible (fisuras, desplomes, acumulación de agua, falta de limpieza, refuerzo expuesto, etc.), "
+        "y las condiciones generales del sitio.\n"
+        "- Si hay texto asociado a la imagen (pie de foto, título, anotación), vincúlalo con tu descripción visual.\n"
+        "- Genera UN chunk de memoria POR CADA IMAGEN relevante, con el formato: "
+        "'[EVIDENCIA FOTOGRÁFICA] Descripción detallada de lo observado en la imagen...'\n\n"
+        "REGLA ESTRICTA: Ignora listas de participantes, firmas y cargos. Concéntrate en la sustancia técnica.\n\n"
+        "Formato de salida JSON requerido:\n"
+        "{\n"
+        "  \"metadatos\": { \"proyecto\": \"Nombre del proyecto\", \"fecha\": \"Fecha del documento\" },\n"
+        "  \"chunks_memoria\": [\n"
+        "    \"Acuerdo o avance textual detallado...\",\n"
+        "    \"[EVIDENCIA FOTOGRÁFICA] Descripción detallada de imagen de obra...\",\n"
+        "    \"Otro acuerdo o pendiente...\"\n"
+        "  ]\n"
+        "}"
+    )
+
+    prompt_contents = [system_prompt] + images
+
+    try:
+        response = model.generate_content(
+            prompt_contents,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+            )
+        )
+        gemini_data = json.loads(response.text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error procesando con Gemini Multimodal: {str(e)}")
+
+    metadatos_gemini = gemini_data.get("metadatos", {})
+    chunks = gemini_data.get("chunks_memoria", [])
 
     if not chunks:
-        raise HTTPException(status_code=422, detail="No se pudo extraer texto del PDF.")
+        raise HTTPException(status_code=422, detail="Gemini no devolvió fragmentos procesables.")
 
-    # 3. Almacenar en ChromaDB con metadatos
+    # 3. Almacenar en ChromaDB con metadatos estructurados por IA
     ids: list[str] = []
     documents: list[str] = []
     metadatas: list[dict] = []
 
     for i, chunk in enumerate(chunks):
         doc_id = f"{file.filename}_{uuid.uuid4().hex[:8]}_{i}"
-        meta = generate_metadata(file.filename, i)
+        meta = {
+            "source": file.filename,
+            "chunk_index": i,
+            "proyecto": metadatos_gemini.get("proyecto", "Desconocido"),
+            "fecha_reunion": metadatos_gemini.get("fecha", "N/A"),
+            "tipo_reunion": "Acuerdo estructurado (IA)"
+        }
         ids.append(doc_id)
         documents.append(chunk)
         metadatas.append(meta)
@@ -173,7 +196,7 @@ async def ingest_pdf(file: UploadFile = File(...)):
     return IngestResponse(
         filename=file.filename,
         chunks_stored=len(chunks),
-        message=f"Se ingresaron {len(chunks)} fragmentos del archivo '{file.filename}' correctamente.",
+        message=f"Se ingresaron {len(chunks)} fragmentos estructurados con Gemini para '{file.filename}'.",
     )
 
 
@@ -201,37 +224,74 @@ async def ask(body: AskRequest):
             sources=[],
         )
 
-    # 2. Construir contexto para el LLM
+    # 2. Ensamblaje explícito del contexto (Context Assembly)
     context_parts: list[str] = []
     sources: list[dict] = []
     for doc, meta, dist in zip(documents, metadatas, distances):
-        context_parts.append(doc)
+        nombre_acta = meta.get("source", "desconocido")
+        fecha = meta.get("fecha_reunion", "N/A")
+        proyecto = meta.get("proyecto", "N/A")
+
+        # Fragmento enriquecido con metadatos para el LLM
+        fragmento_enriquecido = (
+            "--- INICIO DE FRAGMENTO ---\n"
+            f"Documento: {nombre_acta}\n"
+            f"Fecha: {fecha}\n"
+            f"Proyecto: {proyecto}\n"
+            f"Contenido: {doc}\n"
+            "--- FIN DE FRAGMENTO ---"
+        )
+        context_parts.append(fragmento_enriquecido)
+
         sources.append({
             "fragmento": doc[:200] + ("..." if len(doc) > 200 else ""),
-            "archivo": meta.get("source", "desconocido"),
-            "fecha_reunion": meta.get("fecha_reunion", "N/A"),
+            "archivo": nombre_acta,
+            "fecha_reunion": fecha,
             "tipo_reunion": meta.get("tipo_reunion", "N/A"),
             "similitud": round(1 - dist, 4),
         })
 
-    context = "\n---\n".join(context_parts)
+    context = "\n\n".join(context_parts)
 
-    # 3. Llamada simulada a Gemini (se reemplazará con el SDK real)
-    #    En producción: google.generativeai → model.generate_content(prompt)
-    simulated_answer = (
-        f"**Respuesta generada por IA (simulada):**\n\n"
-        f"Basándome en {len(documents)} fragmentos relevantes de las actas de obra, "
-        f"respondo a tu pregunta: *\"{question}\"*\n\n"
-        f"De acuerdo con los registros encontrados:\n"
-    )
-    for i, src in enumerate(sources, 1):
-        simulated_answer += (
-            f"- **Fuente {i}** ({src['tipo_reunion']}, {src['fecha_reunion']}): "
-            f"{src['fragmento'][:120]}…\n"
-        )
-    simulated_answer += (
-        "\n> ⚠️ *Esta respuesta es simulada. Conecta la API de Google Gemini "
-        "para obtener respuestas reales con el SDK `google-generativeai`.*"
+    # 3. Llamada a Gemini con System Prompt Blindado
+    system_instruction = (
+        "Eres el Residente de Obra principal del proyecto. Tu función es responder preguntas "
+        "técnicas y de gestión basándote ÚNICA Y EXCLUSIVAMENTE en los fragmentos de actas de "
+        "reunión proporcionados en el contexto.\n\n"
+        "ESTILO DE RESPUESTA:\n"
+        "- Adopta un tono profesional, técnico, directo y asertivo, típico de un ingeniero civil en campo.\n"
+        "- Responde de forma DETALLADA y EXPLICATIVA. No des respuestas cortas ni telegráficas.\n"
+        "- Cuando la información del contexto lo permita, elabora tu respuesta explicando: "
+        "qué se acordó, por qué es relevante, qué implicaciones tiene para la obra, "
+        "y si hay pendientes o responsables asociados.\n"
+        "- Si el contexto contiene evidencia fotográfica o descripciones visuales de la obra, "
+        "inclúyelas en tu respuesta explicando qué muestran las imágenes y cómo se relacionan "
+        "con la pregunta del ingeniero.\n"
+        "- Organiza la información de forma clara: usa viñetas, secciones o numeración cuando "
+        "haya múltiples puntos que cubrir.\n\n"
+        "REGLAS INQUEBRANTABLES:\n"
+        "- Jamás inventes, asumas o deduzcas información que no esté escrita en el contexto.\n"
+        "- Si la información solicitada no se encuentra en el contexto proporcionado, responde: "
+        "'Como residente, informo que no tenemos registro de esto en el historial "
+        "de actas consultado.' No ofrezcas suposiciones.\n"
+        "- CITA OBLIGATORIA: Después de cada dato clave, DEBES citar el origen usando el formato: "
+        "(Fuente: [Nombre del Acta] - [Fecha]). Tienes prohibido entregar un dato sin su cita.\n"
+        "- Si varios fragmentos aportan información relevante, sintetízalos en una respuesta "
+        "coherente y completa, citando cada fuente correspondiente."
     )
 
-    return AskResponse(answer=simulated_answer, sources=sources)
+    genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
+    model = genai.GenerativeModel(
+        "gemini-2.5-flash",
+        system_instruction=system_instruction,
+    )
+
+    prompt_completo = f"[CONTEXTO]:\n{context}\n\n[PREGUNTA DEL INGENIERO]:\n{question}"
+
+    try:
+        response = model.generate_content(prompt_completo)
+        answer = response.text
+    except Exception as e:
+        answer = f"❌ Error al generar respuesta con Gemini: {str(e)}"
+
+    return AskResponse(answer=answer, sources=sources)

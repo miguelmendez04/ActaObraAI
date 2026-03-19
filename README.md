@@ -1,7 +1,7 @@
 # 🏗️ ActaObra IA
 
-**Sistema RAG (Retrieval-Augmented Generation)** para ingenieros civiles.  
-Sube actas de reuniones de obra (PDFs) y realiza consultas en lenguaje natural sobre los acuerdos históricos.
+**Sistema RAG Multimodal (Retrieval-Augmented Generation)** para ingenieros civiles.  
+Sube actas de reuniones de obra (PDFs con texto, fotos y planos) y realiza consultas en lenguaje natural sobre los acuerdos históricos. El sistema interpreta visualmente las imágenes de avance de obra gracias a **Google Gemini 2.5 Flash**.
 
 ---
 
@@ -10,21 +10,39 @@ Sube actas de reuniones de obra (PDFs) y realiza consultas en lenguaje natural s
 | Capa | Tecnología |
 |---|---|
 | Backend | Python · FastAPI · Uvicorn |
-| Base Vectorial | ChromaDB (local) |
-| IA / LLM | Google Gemini (SDK `google-generativeai`) |
-| Procesamiento | PyPDF2 · LangChain |
+| Base Vectorial | ChromaDB (local, persistente) |
+| IA / LLM | Google Gemini 2.5 Flash (SDK `google-generativeai`) — Multimodal |
+| Procesamiento de PDFs | PyMuPDF (fitz) · Pillow |
 | Frontend | Streamlit |
+
+## Arquitectura RAG
+
+```
+┌───────────────┐      ┌──────────────────────────────────┐
+│  Streamlit UI │─────▶│  FastAPI Backend                  │
+│  (Chat + PDF) │◀─────│                                   │
+└───────────────┘      │  POST /ingest-pdf                 │
+                       │    1. PDF → Imágenes (PyMuPDF)    │
+                       │    2. Imágenes → Gemini Vision     │
+                       │    3. JSON estructurado → ChromaDB │
+                       │                                   │
+                       │  POST /ask                        │
+                       │    1. Pregunta → ChromaDB (search) │
+                       │    2. Contexto + metadatos → Gemini│
+                       │    3. Respuesta citada → Cliente   │
+                       └──────────────────────────────────┘
+```
 
 ## Estructura del Proyecto
 
 ```
 ActaObraIA/
 ├── backend/
-│   └── main.py          # API FastAPI (endpoints /ingest-pdf y /ask)
+│   └── main.py          # API FastAPI con endpoints /ingest-pdf y /ask
 ├── frontend/
-│   └── app.py           # Dashboard Streamlit
-├── chroma_db/           # Datos persistentes de ChromaDB (se crea automáticamente)
-├── venv/                # Entorno virtual Python
+│   └── app.py           # Dashboard Streamlit (chat + sidebar PDF)
+├── chroma_db/           # Base vectorial persistente (se crea automáticamente)
+├── .env                 # API Key de Gemini (no se sube a GitHub)
 ├── requirements.txt     # Dependencias
 └── README.md
 ```
@@ -43,6 +61,10 @@ source venv/bin/activate
 
 # 2. Instalar dependencias
 pip install -r requirements.txt
+
+# 3. Configurar API Key de Gemini
+# Crear archivo .env en la raíz del proyecto:
+echo GEMINI_API_KEY=tu_api_key_aqui > .env
 ```
 
 ## Levantar los Servidores
@@ -50,40 +72,52 @@ pip install -r requirements.txt
 ### Backend (FastAPI)
 
 ```bash
-cd backend
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-El backend estará disponible en: `http://localhost:8000`  
-Documentación interactiva (Swagger): `http://localhost:8000/docs`
+- Backend: `http://localhost:8000`  
+- Swagger UI: `http://localhost:8000/docs`
 
 ### Frontend (Streamlit)
 
 En otra terminal:
 
 ```bash
-cd frontend
-streamlit run app.py --server.port 8501
+streamlit run frontend/app.py --server.port 8501
 ```
 
-El dashboard estará disponible en: `http://localhost:8501`
+- Dashboard: `http://localhost:8501`
+
+## Características Principales
+
+### 📄 Ingesta Multimodal de PDFs
+- Cada página del PDF se convierte en imagen con **PyMuPDF**.
+- Las imágenes se envían a **Gemini 2.5 Flash** en modo visión multimodal.
+- Gemini lee texto mecanografiado, manuscrito, analiza fotos de obra (elementos constructivos, % de avance, materiales, problemas visibles) y extrae acuerdos técnicos.
+- Los fragmentos se almacenan en **ChromaDB** con metadatos reales (proyecto, fecha) extraídos por la IA.
+
+### 🤖 Consultas RAG con Citas Obligatorias
+- Las preguntas se procesan buscando los fragmentos más similares en ChromaDB.
+- El contexto se ensambla con metadatos explícitos (documento, fecha, proyecto) para cada fragmento.
+- Gemini actúa como **Residente de Obra** con un System Prompt blindado:
+  - Tono profesional de ingeniero civil en campo.
+  - Respuestas detalladas y explicativas con viñetas y estructura.
+  - Cero alucinaciones: si no está en las actas, lo dice.
+  - **Cita obligatoria** con formato `(Fuente: [Acta] - [Fecha])`.
 
 ## Uso
 
-1. **Subir PDFs**: Usa la barra lateral del dashboard para arrastrar o seleccionar archivos PDF de actas de obra.
+1. **Subir PDFs**: Usa la barra lateral para arrastrar actas de obra en PDF.
 2. **Consultar**: Escribe tu pregunta en el chat, por ejemplo:
-   - *"¿Qué se acordó sobre el concreto?"*
-   - *"¿Cuáles fueron los acuerdos de la última reunión de seguridad?"*
-   - *"¿Qué pendientes tiene el contratista?"*
+   - *"¿Qué se acordó sobre el concreto y en qué nivel?"*
+   - *"¿Qué evidencia fotográfica hay del avance de obra?"*
+   - *"¿Cuáles son los pendientes más críticos y quién es responsable?"*
+   - *"Resume los acuerdos de la última reunión técnica"*
 
 ## Endpoints de la API
 
 | Método | Ruta | Descripción |
 |---|---|---|
 | `GET` | `/` | Info de la aplicación |
-| `POST` | `/ingest-pdf` | Sube un PDF y almacena sus fragmentos en ChromaDB |
-| `POST` | `/ask` | Envía una pregunta y obtiene una respuesta RAG |
-
----
-
-> ⚠️ **Nota**: La respuesta del LLM es actualmente simulada. Para activar respuestas reales, configura tu API Key de Google Gemini y conecta el SDK `google-generativeai` en `backend/main.py`.
+| `POST` | `/ingest-pdf` | Sube un PDF, lo analiza visualmente con Gemini y almacena los fragmentos en ChromaDB |
+| `POST` | `/ask` | Envía una pregunta y obtiene una respuesta RAG citada con fuentes |

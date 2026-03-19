@@ -1,3 +1,13 @@
+---
+title: ActaObra IA
+emoji: 🏗️
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+license: mit
+---
+
 # 🏗️ ActaObra IA
 
 **Sistema RAG Multimodal (Retrieval-Augmented Generation)** para ingenieros civiles.  

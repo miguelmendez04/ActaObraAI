@@ -146,7 +146,7 @@ if prompt := st.chat_input("Escribe tu consulta, ej: ¿Qué se acordó sobre el 
                 resp = requests.post(
                     f"{BACKEND_URL}/ask",
                     json={"question": prompt},
-                    timeout=30,
+                    timeout=120,
                 )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -177,5 +177,8 @@ if prompt := st.chat_input("Escribe tu consulta, ej: ¿Qué se acordó sobre el 
                     f"Asegúrate de que FastAPI esté corriendo en `{BACKEND_URL}`."
                 )
                 st.warning(answer)
+            except Exception as e:
+                answer = f"⚠️ Error en la consulta: {str(e)}"
+                st.error(answer)
 
     st.session_state.chat_history.append({"role": "assistant", "content": answer})

@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Carga las variables de entorno desde el archivo .env
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, Header
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -48,9 +48,12 @@ def _auto_init_db():
 
 _auto_init_db()
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login", auto_error=False)
 
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+async def get_current_user(
+    token: Optional[str] = Depends(oauth2_scheme),
+    x_n8n_token: Optional[str] = Header(None, alias="X-N8N-TOKEN")
+):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Credenciales no válidas",
@@ -60,8 +63,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     # Bypass para automatizaciones (n8n) usando un token fijo
     # Define N8N_TOKEN en las variables de entorno / Secrets
     n8n_token = os.environ.get("N8N_TOKEN")
-    if n8n_token and token == n8n_token:
+    if n8n_token and (token == n8n_token or x_n8n_token == n8n_token):
         return User(username="n8n_bot", company_id="company_A")
+
+    if not token:
+        raise credentials_exception
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])

@@ -56,6 +56,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         detail="Credenciales no válidas",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
+    # Bypass para automatizaciones (n8n) usando un token fijo
+    # Define N8N_TOKEN en las variables de entorno / Secrets
+    n8n_token = os.environ.get("N8N_TOKEN")
+    if n8n_token and token == n8n_token:
+        return User(username="n8n_bot", company_id="company_A")
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")

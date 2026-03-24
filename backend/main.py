@@ -138,6 +138,14 @@ class IngestResponse(BaseModel):
     message: str
 
 
+class IngestJsonRequest(BaseModel):
+    source: str
+    proyecto: Optional[str] = "Desconocido"
+    fecha_reunion: Optional[str] = "N/A"
+    tipo_reunion: Optional[str] = "Ingesta automática (n8n)"
+    chunks: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -147,7 +155,7 @@ def root():
     return {
         "app": "ActaObra IA",
         "version": "0.3.0",
-        "endpoints": ["/api/ingest-pdf", "/api/ask", "/api/documents"],
+        "endpoints": ["/api/ingest-pdf", "/api/ingest-json", "/api/ask", "/api/documents"],
     }
 
 @app.post("/api/login")
@@ -309,6 +317,45 @@ async def ingest_pdf(file: UploadFile = File(...), current_user: User = Depends(
         filename=file.filename,
         chunks_stored=len(chunks),
         message=f"Se ingresaron {len(chunks)} fragmentos estructurados con Gemini para '{file.filename}'.",
+    )
+
+
+@app.post("/api/ingest-json", response_model=IngestResponse)
+async def ingest_json(body: IngestJsonRequest, current_user: User = Depends(get_current_user)):
+    """
+    Ingesta directa de datos JSON (para integraciones como n8n).
+    No requiere procesamiento con Gemini, asume que el JSON ya viene estructurado.
+    """
+    if not body.chunks:
+        raise HTTPException(status_code=400, detail="No se proporcionaron fragmentos de texto (chunks).")
+        
+    ids: list[str] = []
+    documents: list[str] = []
+    metadatas: list[dict] = []
+
+    for i, chunk in enumerate(body.chunks):
+        doc_id = f"{body.source}_{uuid.uuid4().hex[:8]}_{i}"
+        meta = {
+            "source": body.source,
+            "chunk_index": i,
+            "proyecto": body.proyecto,
+            "fecha_reunion": body.fecha_reunion,
+            "tipo_reunion": body.tipo_reunion
+        }
+        ids.append(doc_id)
+        documents.append(chunk)
+        metadatas.append(meta)
+
+    user_collection = chroma_client.get_or_create_collection(
+        name=f"actas_{current_user.company_id}",
+        metadata={"hnsw:space": "cosine"}
+    )
+    user_collection.add(ids=ids, documents=documents, metadatas=metadatas)
+
+    return IngestResponse(
+        filename=body.source,
+        chunks_stored=len(body.chunks),
+        message=f"Se ingresaron {len(body.chunks)} fragmentos estructurados desde JSON para '{body.source}'.",
     )
 
 

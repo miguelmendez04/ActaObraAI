@@ -111,7 +111,7 @@ function App() {
   };
 
   // Cargar documentos al inicio si esta autenticado
-  const fetchDocuments = async () => {
+  const fetchDocuments = async (silent = false) => {
     try {
       const response = await fetch(getApiUrl('documents'), {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
@@ -121,12 +121,14 @@ function App() {
         const data = await response.json();
         const newDocs = data.documents || [];
         
-        // Detectar documentos nuevos
-        if (prevDocCountRef.current > 0 && newDocs.length > prevDocCountRef.current) {
-          const diff = newDocs.length - prevDocCountRef.current;
-          showToast(`📄 ${diff} nuevo(s) documento(s) ingresado(s) a la base de datos`, 'success');
+        // Detectar documentos nuevos comparando nombres
+        const prevNames = new Set((prevDocCountRef.current || []).map(d => d.name));
+        const newNames = newDocs.filter(d => !prevNames.has(d.name));
+        
+        if (prevDocCountRef.current && prevDocCountRef.current.length > 0 && newNames.length > 0) {
+          showToast(`📄 ${newNames.length} nuevo(s) documento(s): ${newNames.map(d => d.name).join(', ')}`, 'success');
         }
-        prevDocCountRef.current = newDocs.length;
+        prevDocCountRef.current = newDocs;
         setDocuments(newDocs);
       }
     } catch (error) { console.error("Error cargando DB:", error); }
@@ -135,8 +137,8 @@ function App() {
   useEffect(() => {
     if (isAuthenticated) {
       fetchDocuments();
-      // Polling cada 30 segundos
-      const interval = setInterval(fetchDocuments, 30000);
+      // Polling cada 10 segundos para detectar cambios rápido
+      const interval = setInterval(() => fetchDocuments(true), 10000);
       return () => clearInterval(interval);
     }
   }, [isAuthenticated]);

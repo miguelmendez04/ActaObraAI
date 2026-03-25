@@ -619,32 +619,44 @@ function App() {
                         <th className="px-6 py-4 font-bold tracking-widest border-r border-outline-variant/10">Nombre del Documento</th>
                         <th className="px-6 py-4 font-bold tracking-widest border-r border-outline-variant/10">Proyecto</th>
                         <th className="px-6 py-4 font-bold tracking-widest border-r border-outline-variant/10">Fecha Reunión</th>
+                        <th className="px-6 py-4 font-bold tracking-widest border-r border-outline-variant/10">Origen</th>
                         <th className="px-6 py-4 font-bold tracking-widest text-right">Estado</th>
                       </tr>
                     </thead>
                     <tbody>
                       {documents.length === 0 ? (
                         <tr>
-                          <td colSpan="4" className="px-6 py-12 text-center text-slate-500 font-medium bg-slate-50/50 dark:bg-slate-900/50">
+                          <td colSpan="5" className="px-6 py-12 text-center text-slate-500 font-medium bg-slate-50/50 dark:bg-slate-900/50">
                             Aún no has subido ningún documento.
                           </td>
                         </tr>
                       ) : (
-                        documents.map((doc, i) => (
+                        documents.map((doc, i) => {
+                          const isN8n = doc.tipo && (doc.tipo.toLowerCase().includes('n8n') || doc.tipo.toLowerCase().includes('automát'));
+                          return (
                           <tr key={i} className="border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                             <td className="px-6 py-4 flex items-center gap-3 border-r border-outline-variant/5">
-                              <span className="p-2 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 rounded block shadow-sm"><span className="material-symbols-outlined text-[16px] block">picture_as_pdf</span></span>
+                              <span className={`p-2 rounded block shadow-sm ${isN8n ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>
+                                <span className="material-symbols-outlined text-[16px] block">{isN8n ? 'integration_instructions' : 'picture_as_pdf'}</span>
+                              </span>
                               <span className="font-bold text-slate-700 dark:text-slate-300 max-w-[250px] md:max-w-md truncate" title={doc.name}>{doc.name}</span>
                             </td>
                             <td className="px-6 py-4 border-r border-outline-variant/5 capitalize font-medium">{doc.proyecto !== 'Desconocido' ? doc.proyecto : <span className="text-slate-400 italic">Múltiples</span>}</td>
                             <td className="px-6 py-4 border-r border-outline-variant/5 font-mono text-xs text-slate-500">{doc.fecha}</td>
+                            <td className="px-6 py-4 border-r border-outline-variant/5">
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${isN8n ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-400' : 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-400'}`}>
+                                <span className="material-symbols-outlined text-[12px]">{isN8n ? 'webhook' : 'upload_file'}</span>
+                                {isN8n ? 'n8n Auto' : 'PDF Manual'}
+                              </span>
+                            </td>
                             <td className="px-6 py-4 text-right">
                               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400 uppercase tracking-wider">
                                 <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span> Listo
                               </span>
                             </td>
                           </tr>
-                        ))
+                          );
+                        })
                       )}
                     </tbody>
                   </table>

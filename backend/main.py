@@ -212,7 +212,8 @@ def get_documents(current_user: User = Depends(get_current_user)):
                     archivos_unicos[archivo] = {
                         "name": archivo,
                         "proyecto": meta.get("proyecto", "Desconocido"),
-                        "fecha": meta.get("fecha_reunion", "N/A")
+                        "fecha": meta.get("fecha_reunion", "N/A"),
+                        "tipo": meta.get("tipo_reunion", "PDF")
                     }
         
         docs_list = list(archivos_unicos.values())

@@ -336,39 +336,63 @@ async def ingest_pdf(file: UploadFile = File(...), current_user: User = Depends(
 @app.post("/api/ingest-json", response_model=IngestResponse)
 async def ingest_json(body: IngestJsonRequest, current_user: User = Depends(get_current_user)):
     """
-    Ingesta directa de datos JSON (para integraciones como n8n).
-    No requiere procesamiento con Gemini, asume que el JSON ya viene estructurado.
+    Ingesta directa de datos JSON (protegida por JWT).
     """
     if not body.chunks:
         raise HTTPException(status_code=400, detail="No se proporcionaron fragmentos de texto (chunks).")
         
-    ids: list[str] = []
-    documents: list[str] = []
-    metadatas: list[dict] = []
-
+    ids, documents, metadatas = [], [], []
     for i, chunk in enumerate(body.chunks):
         doc_id = f"{body.source}_{uuid.uuid4().hex[:8]}_{i}"
         meta = {
-            "source": body.source,
-            "chunk_index": i,
-            "proyecto": body.proyecto,
-            "fecha_reunion": body.fecha_reunion,
+            "source": body.source, "chunk_index": i,
+            "proyecto": body.proyecto, "fecha_reunion": body.fecha_reunion,
             "tipo_reunion": body.tipo_reunion
         }
-        ids.append(doc_id)
-        documents.append(chunk)
-        metadatas.append(meta)
+        ids.append(doc_id); documents.append(chunk); metadatas.append(meta)
 
     user_collection = chroma_client.get_or_create_collection(
-        name=f"actas_{current_user.company_id}",
-        metadata={"hnsw:space": "cosine"}
+        name=f"actas_{current_user.company_id}", metadata={"hnsw:space": "cosine"}
     )
     user_collection.add(ids=ids, documents=documents, metadatas=metadatas)
-
     return IngestResponse(
-        filename=body.source,
-        chunks_stored=len(body.chunks),
-        message=f"Se ingresaron {len(body.chunks)} fragmentos estructurados desde JSON para '{body.source}'.",
+        filename=body.source, chunks_stored=len(body.chunks),
+        message=f"Se ingresaron {len(body.chunks)} fragmentos desde JSON para '{body.source}'.",
+    )
+
+
+@app.post("/api/n8n/ingest", response_model=IngestResponse)
+async def n8n_ingest(body: IngestJsonRequest, token: str = ""):
+    """
+    Endpoint dedicado para n8n.  Sin OAuth2.
+    La autenticación se hace con ?token=TU_SECRETO en la URL.
+    """
+    n8n_token = os.environ.get("N8N_TOKEN", "")
+    if not n8n_token or token != n8n_token:
+        raise HTTPException(status_code=403, detail="Token inválido.")
+
+    company_id = body.company_id if hasattr(body, 'company_id') else "company_A"
+
+    if not body.chunks:
+        raise HTTPException(status_code=400, detail="No se proporcionaron fragmentos de texto (chunks).")
+        
+    ids, documents, metadatas = [], [], []
+    for i, chunk in enumerate(body.chunks):
+        doc_id = f"{body.source}_{uuid.uuid4().hex[:8]}_{i}"
+        meta = {
+            "source": body.source, "chunk_index": i,
+            "proyecto": body.proyecto, "fecha_reunion": body.fecha_reunion,
+            "tipo_reunion": body.tipo_reunion
+        }
+        ids.append(doc_id); documents.append(chunk); metadatas.append(meta)
+
+    user_collection = chroma_client.get_or_create_collection(
+        name=f"actas_{company_id}", metadata={"hnsw:space": "cosine"}
+    )
+    user_collection.add(ids=ids, documents=documents, metadatas=metadatas)
+    return IngestResponse(
+        filename=body.source, chunks_stored=len(body.chunks),
+        message=f"Se ingresaron {len(body.chunks)} fragmentos desde n8n para '{body.source}'.",
     )
 
 

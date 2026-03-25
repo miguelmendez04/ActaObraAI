@@ -398,6 +398,103 @@ async def n8n_ingest(body: IngestJsonRequest, token: str = ""):
     )
 
 
+@app.post("/api/n8n/ingest-pdf", response_model=IngestResponse)
+async def n8n_ingest_pdf(
+    file: UploadFile = File(...),
+    token: str = "",
+    company_id: str = "company_A"
+):
+    """
+    Endpoint dedicado para subir PDFs desde n8n.  Sin OAuth2.
+    Usa el mismo procesamiento Gemini multimodal que /api/ingest-pdf.
+    Auth via ?token=TU_SECRETO&company_id=company_A en la URL.
+    """
+    n8n_token = os.environ.get("N8N_TOKEN", "")
+    if not n8n_token or token != n8n_token:
+        raise HTTPException(status_code=403, detail="Token inválido.")
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Solo se aceptan archivos PDF.")
+
+    file_bytes = await file.read()
+
+    # 1. Extracción de imágenes del PDF
+    images = extract_images_from_pdf(file_bytes)
+    if not images:
+        raise HTTPException(status_code=422, detail="No se pudo procesar el PDF.")
+
+    # 2. Llamada a Gemini para estructurar el JSON desde las imágenes
+    genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
+    model = genai.GenerativeModel("gemini-2.5-flash")
+
+    system_prompt = (
+        "Eres un ingeniero civil senior con 20 años de experiencia analizando actas de reuniones "
+        "y reportes de avance de obra presentados como imágenes de páginas de un PDF.\n\n"
+        "INSTRUCCIONES PARA TEXTO:\n"
+        "- Lee todo el texto mecanografiado, manuscrito y anotaciones visibles.\n"
+        "- Extrae cada acuerdo, compromiso, observación técnica, pendiente y decisión como un string individual y detallado.\n"
+        "- Incluye datos específicos: cantidades, medidas, especificaciones técnicas (f'c, diámetros, etc.), plazos y responsables mencionados.\n\n"
+        "INSTRUCCIONES PARA IMÁGENES Y FOTOS (CRÍTICO):\n"
+        "- Si la página contiene fotografías de la obra, planos, croquis o diagramas, DEBES analizarlos a fondo.\n"
+        "- Para cada imagen de obra, describe detalladamente: qué elemento constructivo se muestra, "
+        "el estado visible de avance, los materiales visibles, cualquier problema visible, "
+        "y las condiciones generales del sitio.\n"
+        "- Genera UN chunk de memoria POR CADA IMAGEN relevante, con el formato: "
+        "'[EVIDENCIA FOTOGRÁFICA] Descripción detallada de lo observado en la imagen...'\n\n"
+        "REGLA ESTRICTA: Ignora listas de participantes, firmas y cargos. Concéntrate en la sustancia técnica.\n\n"
+        "Formato de salida JSON requerido:\n"
+        "{\n"
+        "  \"metadatos\": { \"proyecto\": \"Nombre del proyecto\", \"fecha\": \"Fecha del documento\" },\n"
+        "  \"chunks_memoria\": [\n"
+        "    \"Acuerdo o avance textual detallado...\",\n"
+        "    \"[EVIDENCIA FOTOGRÁFICA] Descripción detallada de imagen de obra...\"\n"
+        "  ]\n"
+        "}"
+    )
+
+    prompt_contents = [system_prompt] + images
+
+    try:
+        response = model.generate_content(
+            prompt_contents,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+            )
+        )
+        gemini_data = json.loads(response.text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error procesando con Gemini: {str(e)}")
+
+    metadatos_gemini = gemini_data.get("metadatos", {})
+    chunks = gemini_data.get("chunks_memoria", [])
+
+    if not chunks:
+        raise HTTPException(status_code=422, detail="Gemini no devolvió fragmentos procesables.")
+
+    # 3. Almacenar en ChromaDB
+    ids, documents_list, metadatas = [], [], []
+    for i, chunk in enumerate(chunks):
+        doc_id = f"{file.filename}_{uuid.uuid4().hex[:8]}_{i}"
+        meta = {
+            "source": file.filename,
+            "chunk_index": i,
+            "proyecto": metadatos_gemini.get("proyecto", "Desconocido"),
+            "fecha_reunion": metadatos_gemini.get("fecha", "N/A"),
+            "tipo_reunion": "Ingesta automática PDF (n8n)"
+        }
+        ids.append(doc_id); documents_list.append(chunk); metadatas.append(meta)
+
+    user_collection = chroma_client.get_or_create_collection(
+        name=f"actas_{company_id}", metadata={"hnsw:space": "cosine"}
+    )
+    user_collection.add(ids=ids, documents=documents_list, metadatas=metadatas)
+
+    return IngestResponse(
+        filename=file.filename,
+        chunks_stored=len(chunks),
+        message=f"Se ingresaron {len(chunks)} fragmentos desde PDF (n8n) para '{file.filename}'.",
+    )
+
 @app.post("/api/ask", response_model=AskResponse)
 async def ask(body: AskRequest, current_user: User = Depends(get_current_user)):
     """

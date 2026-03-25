@@ -153,6 +153,7 @@ class IngestResponse(BaseModel):
 
 class IngestJsonRequest(BaseModel):
     source: str
+    company_id: Optional[str] = "company_A"
     proyecto: Optional[str] = "Desconocido"
     fecha_reunion: Optional[str] = "N/A"
     tipo_reunion: Optional[str] = "Ingesta automática (n8n)"
@@ -372,7 +373,7 @@ async def n8n_ingest(body: IngestJsonRequest, token: str = ""):
     if not n8n_token or token != n8n_token:
         raise HTTPException(status_code=403, detail="Token inválido.")
 
-    company_id = body.company_id if hasattr(body, 'company_id') else "company_A"
+    company_id = body.company_id
 
     if not body.chunks:
         raise HTTPException(status_code=400, detail="No se proporcionaron fragmentos de texto (chunks).")

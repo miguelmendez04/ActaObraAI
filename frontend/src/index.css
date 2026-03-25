@@ -23,3 +23,14 @@ body {
 .primary-gradient {
   background: linear-gradient(to bottom, #385d8e, #5276a8);
 }
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}

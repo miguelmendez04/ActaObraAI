@@ -23,9 +23,11 @@ function App() {
   // Inputs y UI
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [toast, setToast] = useState(null); // { message, type }
   
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
+  const prevDocCountRef = useRef(0);
 
   // Cargar chats al iniciar sesión
   useEffect(() => {
@@ -59,6 +61,12 @@ function App() {
     return window.location.hostname === 'localhost' && window.location.port === '5173'
       ? `http://localhost:8000/api/${endpoint}`
       : `/api/${endpoint}`;
+  };
+
+  // Toast helper
+  const showToast = (message, type = 'info') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 5000);
   };
 
   const handleLogout = () => {
@@ -111,13 +119,26 @@ function App() {
       if (response.status === 401) return handleLogout();
       if (response.ok) {
         const data = await response.json();
-        setDocuments(data.documents || []);
+        const newDocs = data.documents || [];
+        
+        // Detectar documentos nuevos
+        if (prevDocCountRef.current > 0 && newDocs.length > prevDocCountRef.current) {
+          const diff = newDocs.length - prevDocCountRef.current;
+          showToast(`📄 ${diff} nuevo(s) documento(s) ingresado(s) a la base de datos`, 'success');
+        }
+        prevDocCountRef.current = newDocs.length;
+        setDocuments(newDocs);
       }
     } catch (error) { console.error("Error cargando DB:", error); }
   };
 
   useEffect(() => {
-    if (isAuthenticated) fetchDocuments();
+    if (isAuthenticated) {
+      fetchDocuments();
+      // Polling cada 30 segundos
+      const interval = setInterval(fetchDocuments, 30000);
+      return () => clearInterval(interval);
+    }
   }, [isAuthenticated]);
 
   const handleNewChat = () => {
@@ -667,6 +688,23 @@ function App() {
         )}
 
       </main>
+
+      {/* ================= TOAST NOTIFICATION ================= */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-4 rounded-2xl shadow-2xl border animate-[slideInRight_0.4s_ease-out] ${
+          toast.type === 'success' 
+            ? 'bg-emerald-50 dark:bg-emerald-950 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300' 
+            : 'bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'
+        }`}>
+          <span className={`material-symbols-outlined text-xl ${toast.type === 'success' ? 'text-emerald-500' : 'text-blue-500'}`}>
+            {toast.type === 'success' ? 'notifications_active' : 'info'}
+          </span>
+          <span className="font-semibold text-sm max-w-xs">{toast.message}</span>
+          <button onClick={() => setToast(null)} className="ml-2 p-1 hover:bg-black/10 rounded-full transition-colors">
+            <span className="material-symbols-outlined text-[16px]">close</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

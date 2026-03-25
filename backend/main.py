@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Carga las variables de entorno desde el archivo .env
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, Header, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -401,8 +401,8 @@ async def n8n_ingest(body: IngestJsonRequest, token: str = ""):
 @app.post("/api/n8n/ingest-pdf", response_model=IngestResponse)
 async def n8n_ingest_pdf(
     file: UploadFile = File(...),
-    token: str = "",
-    company_id: str = "company_A"
+    token: str = Query(""),
+    company_id: str = Query("company_A")
 ):
     """
     Endpoint dedicado para subir PDFs desde n8n.  Sin OAuth2.

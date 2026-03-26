@@ -1,0 +1,45 @@
+@startuml Arquitectura ActaObra IA
+!theme plain
+skinparam componentStyle uml2
+
+actor "Ingenieros en Obra" as Engineer
+actor "Cliente / Gerencia" as Client
+
+package "Google Drive" {
+  folder "Carpeta Empresa A\n(Audios/PDFs)" as DriveA
+  folder "Carpeta Empresa B\n(Audios/PDFs)" as DriveB
+}
+
+package "Automatización (n8n)" {
+  component "Workflow Empresa A\n(Integra Gemini Audio/Vision)" as N8nA
+  component "Workflow Empresa B\n(Integra Gemini Audio/Vision)" as N8nB
+}
+
+package "Backend FastAPI (Hugging Face)" {
+  component "API Ingesta n8n\nPOST /api/n8n/ingest\nPOST /api/n8n/ingest-pdf\n(Protegido: ?token=...)" as IngestAPI
+  database "Vector Database (ChromaDB)\n- Colección: actas_company_A\n- Colección: actas_company_B" as VectorDB
+  component "API Frontend\nPOST /api/ask (RAG/Gemini)\nGET /api/documents\n(Protegido: OAuth2 Bearer)" as AppAPI
+}
+
+node "Navegador Cliente" {
+  component "Frontend React + Vite\nWebApp ActaObra IA\n- Interfaz Multi-Chat\n- DB View (Polling 10s)\n- Toast Notificaciones" as WebApp
+}
+
+' Relaciones - Flujo de subida
+Engineer --> DriveA : Sube actas
+Engineer --> DriveB : Sube actas
+
+DriveA -down-> N8nA : File Trigger / Search
+DriveB -down-> N8nB : File Trigger / Search
+
+N8nA -right-> IngestAPI : Request HTTP POST\n(JSON o Multipart/File)
+N8nB -right-> IngestAPI : Request HTTP POST\n(JSON o Multipart/File)
+
+IngestAPI -down-> VectorDB : Extrae, Vectoriza\ny guarda Chunks
+
+' Relaciones - Flujo de consulta
+Client <-right-> WebApp : Interactúa con chats\ny revisa la DB
+WebApp -up-> AppAPI : Fetch\n(Consultas y Auto-Refresh)
+AppAPI <-down-> VectorDB : Búsqueda Semántica / Recuperación
+
+@enduml

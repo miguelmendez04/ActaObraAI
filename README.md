@@ -31,13 +31,15 @@ Sube actas de reuniones de obra (PDFs con texto, fotos y planos) y realiza consu
 ```
 ┌─────────────────────────────────┐      ┌──────────────────────────────────┐
 │  React UI (Vite + Tailwind)     │─────▶│  FastAPI Backend                 │
-│  (Chat Dashboard SPA)           │◀─────│  Servido estáticamente en '/'    │
+│  (Chat & View Auto-Refresh 10s) │◀─────│  Servido estáticamente en '/'    │
 └─────────────────────────────────┘      │                                  │
-                                         │  POST /api/ingest-pdf            │
-                                         │    1. PDF → Imágenes (PyMuPDF)   │
-                                         │    2. Imágenes → Gemini Vision    │
-                                         │    3. JSON estructurado → Chroma │
+                                         │  ▶ Ingresos Manuales             │
+┌─────────────────────────────────┐      │  POST /api/ingest-pdf            │
+│  n8n Automation Workflows       │──────┼▶ POST /api/n8n/ingest-pdf        │
+│  (Google Drive → n8n → API)     │──────┼▶ POST /api/n8n/ingest (Audios)   │
+└─────────────────────────────────┘      │    (Clasificados por company_id) │
                                          │                                  │
+                                         │  ▶ Consultas RAG                 │
                                          │  POST /api/ask                   │
                                          │    1. Pregunta → ChromaDB        │
                                          │    2. Contexto + meta → Gemini   │
@@ -111,15 +113,16 @@ Abre tu navegador en `http://localhost:7860`.
 
 ## Características Principales
 
-### 📄 Ingesta Multimodal de PDFs (Multi-Archivo)
-- **Carga en Lote**: Arrastra y suelta múltiples PDFs en la interfaz; se procesarán sistemáticamente.
-- Cada página se convierte en imagen (PyMuPDF) y es leída nativamente por **Gemini 2.5 Flash** en modo visión.
-- Extrae mecánicamente texto manuscrito y fotos de elementos constructivos catalogando porcentaje de avance y problemas visibles.
+### 📄 Ingesta Automatizada y Manual (Multi-Empresa)
+- **Automatización con n8n**: Los documentos (Audios de reuniones procesados o PDFs de actas) se suben directamente a Google Drive y un workflow de n8n los envía automáticamente a los endpoints `/api/n8n/ingest` y `/api/n8n/ingest-pdf`.
+- **Segmentación por Cliente**: Soporte integrado para múltiples empresas (`company_id`) a través de colecciones independientes de ChromaDB para aislar completamente la información de cada cliente.
+- **Carga Manual en UI**: Arrastra y suelta múltiples PDFs en la interfaz; se procesarán sistemáticamente.
+- Cada PDF se convierte en imágenes (PyMuPDF) y es leído nativamente por **Gemini 2.5 Flash** en modo visión para extraer tanto texto como estatus constructivo de las fotografías detectadas.
 
-### 🤖 Memoria Operativa Persistente
-- Las actas se almacenan en tiempo real en la base de datos `ChromaDB` (local/disco).
-- El menú lateral consulta permanentemente el endpoint `GET /api/documents` y te ofrece el listado histórico de toda tu Inteligencia Institucional ingerida.
-- Endpoint administrativo disponible (`DELETE /api/documents`) para reiniciar la base de conocimiento 100% en limpio.
+### 🤖 Base de Datos en Tiempo Real (Polling)
+- Las actas se almacenan en tiempo real en la base de datos vectorial `ChromaDB` segmentada.
+- El menú lateral consulta permanentemente el endpoint `GET /api/documents` mediante un sistema de **Polling automático cada 10 segundos**.
+- **Notificaciones (Toasts)** alertan a los usuarios en pantalla cuando nuevos documentos son ingestados de forma asíncrona por n8n en el trasfondo, eliminando la necesidad de recargar la página.
 
 ### 🏢 Consultas RAG Nivel "Ingeniero Civil Residente"
 - Las preguntas al chat buscan similitud semántica en los fragmentos mediante incrustaciones vectoriales.
